@@ -1,0 +1,17 @@
+[package]
+name = "ce-ratio"
+version = "0.1.0"
+edition = "2024"
+description = "Torrent-style compute share-ratio and reputation over ce-rs. Ranks/orders only — never feeds capability verification."
+license = "MIT"
+repository = "https://github.com/ce-net/ce-ratio"
+keywords = ["ce", "reputation", "share-ratio", "scheduler", "p2p"]
+categories = ["api-bindings"]
+
+[dependencies]
+ce-rs = { path = "../ce-rs" }
+anyhow = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
