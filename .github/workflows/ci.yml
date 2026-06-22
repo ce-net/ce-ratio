@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: build + test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout ce-ratio
+        uses: actions/checkout@v4
+        with:
+          path: ce-ratio
+
+      # Path dependency: ce-ratio depends on ../ce-rs
+      - name: Checkout ce-rs
+        uses: actions/checkout@v4
+        with:
+          repository: ce-net/ce-rs
+          path: ce-rs
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ce-ratio
+
+      - name: Build
+        working-directory: ce-ratio
+        run: cargo build --all --verbose
+
+      - name: Test
+        working-directory: ce-ratio
+        run: cargo test --all --verbose
