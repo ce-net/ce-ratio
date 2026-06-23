@@ -53,8 +53,9 @@ use ce_rs::{Amount, AtlasEntry, NodeHistory};
 // with it (addressing the §10 risk: "if SETTLEMENT_BURN_BPS ever changes, the floor must move").
 // ---------------------------------------------------------------------------
 
-/// Settlement burn rate in basis points. Mirror of `ce-chain::SETTLEMENT_BURN_BPS` (1.00%).
-pub const SETTLEMENT_BURN_BPS: u128 = 100;
+/// Settlement burn rate in basis points. Mirror of `ce-chain::SETTLEMENT_BURN_BPS` (80.00% — the
+/// reward spread: a provider keeps one fifth of each settlement).
+pub const SETTLEMENT_BURN_BPS: u128 = 8000;
 
 /// Basis-point denominator. Mirror of `ce-chain::BPS_DENOM`.
 pub const BPS_DENOM: u128 = 10_000;
@@ -65,7 +66,7 @@ pub const BPS_DENOM: u128 = 10_000;
 /// `1.0`: as the *cell* it is debited gross `G` (counted in `spent`), and as the *host* of an
 /// equal gross volume it receives `G * (BPS_DENOM - SETTLEMENT_BURN_BPS) / BPS_DENOM` (counted in
 /// `earned`, net of burn). So the balanced point is `(BPS_DENOM - SETTLEMENT_BURN_BPS) / BPS_DENOM`
-/// — `9900/10000 = 0.99` at the shipped 1% burn. DERIVED, never hardcoded.
+/// — `2000/10000 = 0.20` at the 80% reward-spread burn. DERIVED, never hardcoded.
 pub const fn balanced_point() -> (u128, u128) {
     (BPS_DENOM - SETTLEMENT_BURN_BPS, BPS_DENOM)
 }
@@ -76,8 +77,8 @@ pub const fn balanced_point() -> (u128, u128) {
 /// Derived from [`balanced_point`] with a small safety margin so honest participants are **never**
 /// penalized by the burn they already paid. We place the floor a further `FLOOR_MARGIN_BPS` below
 /// the exact balanced point: `floor = balanced_point * (BPS_DENOM - FLOOR_MARGIN_BPS) / BPS_DENOM`.
-/// At 1% burn and a 400 bps margin this yields `0.99 * 0.96 = 0.9504 ≈ 0.95`, matching the design
-/// doc's stated 0.95 — but as a *derived* value, not a magic constant.
+/// At the 80% burn and a 400 bps margin this yields `0.20 * 0.96 = 0.192` — a *derived* value, not a
+/// magic constant; the floor tracks the burn automatically.
 pub const FLOOR_MARGIN_BPS: u128 = 400;
 
 /// Compute the default balanced floor as an exact `(num, den)` pair, derived from the burn.
@@ -87,6 +88,15 @@ pub const fn default_balanced_floor() -> (u128, u128) {
     let num = bp_num * (BPS_DENOM - FLOOR_MARGIN_BPS);
     let den = bp_den * BPS_DENOM;
     (num, den)
+}
+
+/// Default Contributor threshold `(num, den)`: a node that hosts roughly **twice** what it consumes.
+/// Expressed relative to the burn-derived [`balanced_point`] so it scales with the burn instead of
+/// being a magic absolute. At 1% burn this is `2 * 0.99 = 1.98 ≈ 2.0` (the historical value); at the
+/// 80% reward spread it is `2 * 0.20 = 0.40`.
+pub const fn default_contributor_threshold() -> (u128, u128) {
+    let (bp_num, bp_den) = balanced_point();
+    (2 * bp_num, bp_den)
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +262,8 @@ pub struct RatioConfig {
     /// Balanced floor as `(num, den)`; default derived from the burn via [`default_balanced_floor`].
     pub balanced_floor_num: u128,
     pub balanced_floor_den: u128,
-    /// Contributor threshold as `(num, den)`; default `2/1` (ratio >= 2.0).
+    /// Contributor threshold as `(num, den)`; default ~2x the burn-derived balanced point via
+    /// [`default_contributor_threshold`] (hosts ~2x consumption; 1.98 at 1% burn, 0.40 at 80%).
     pub contributor_num: u128,
     pub contributor_den: u128,
     /// Vetting window in blocks for newcomer grace (default 8_640 ≈ 24h at ~10s blocks).
@@ -275,11 +286,12 @@ pub struct RatioConfig {
 impl Default for RatioConfig {
     fn default() -> Self {
         let (fnum, fden) = default_balanced_floor();
+        let (cnum, cden) = default_contributor_threshold();
         RatioConfig {
             balanced_floor_num: fnum,
             balanced_floor_den: fden,
-            contributor_num: 2,
-            contributor_den: 1,
+            contributor_num: cnum,
+            contributor_den: cden,
             vetting_blocks: 8_640,
             freeleech_cap: Amount::from_credits(5),
             active_blocks: 8_640,
@@ -592,12 +604,12 @@ mod tests {
 
     #[test]
     fn balanced_point_is_derived_from_burn_not_hardcoded() {
-        // At 1% burn: 9900/10000 = 0.99 exactly.
+        // At the 80% reward-spread burn: 2000/10000 = 0.20 exactly.
         let (n, d) = balanced_point();
-        assert_eq!((n, d), (9_900, 10_000));
-        // The honest balanced node (earned = spent * 0.99) clears the balanced floor exactly.
+        assert_eq!((n, d), (2_000, 10_000));
+        // The honest balanced node (earned = spent * 0.20) clears the balanced floor exactly.
         let r = Ratio {
-            contributed: 99,
+            contributed: 20,
             consumed: 100,
         };
         let (fnum, fden) = default_balanced_floor();
@@ -608,11 +620,11 @@ mod tests {
     }
 
     #[test]
-    fn default_floor_is_about_0_95() {
+    fn default_floor_is_about_0_192() {
         let (n, d) = default_balanced_floor();
-        // 9900*9600 / (10000*10000) = 95_040_000 / 100_000_000 = 0.9504
+        // 2000*9600 / (10000*10000) = 19_200_000 / 100_000_000 = 0.192
         let approx = n as f64 / d as f64;
-        assert!((approx - 0.9504).abs() < 1e-9, "got {approx}");
+        assert!((approx - 0.192).abs() < 1e-9, "got {approx}");
     }
 
     // --- ratio exactness --------------------------------------------------
@@ -695,16 +707,16 @@ mod tests {
     #[test]
     fn leech_below_floor() {
         let cfg = RatioConfig::default();
-        // ratio 0.5, past vetting (large spent so over cap).
-        let h = hist(50, 100, 1, 1);
+        // ratio 0.10 — below the 0.192 burn-derived floor — past vetting (large spent so over cap).
+        let h = hist(10, 100, 1, 1);
         assert_eq!(classify(&h, 100_000, &cfg), Tier::Leech);
     }
 
     #[test]
     fn balanced_at_burn_point() {
         let cfg = RatioConfig::default();
-        // ratio 0.99 — honest burn-balanced — must be Balanced, NOT Leech.
-        let h = hist(99, 100, 1, 1);
+        // ratio 0.20 — honest burn-balanced at the 80% reward spread — must be Balanced, NOT Leech.
+        let h = hist(20, 100, 1, 1);
         assert_eq!(classify(&h, 100_000, &cfg), Tier::Balanced);
     }
 
@@ -871,7 +883,7 @@ mod tests {
 
     #[test]
     fn self_dealing_ring_combined_ratio_below_balanced() {
-        // Two identities A,B trade only with each other. Each leg burns 1%.
+        // Two identities A,B trade only with each other. Each leg burns 80% (the reward spread).
         // A pays B (B earns net, A spends gross); B pays A (A earns net, B spends gross).
         let g: u128 = 1_000 * CREDIT_I as u128;
         let net = g - g * SETTLEMENT_BURN_BPS / BPS_DENOM;
@@ -884,12 +896,12 @@ mod tests {
             consumed: combined_spent,
         };
         let (bp_num, bp_den) = balanced_point();
-        // Combined ring ratio equals exactly the balanced point (0.99) — it can never exceed it,
+        // Combined ring ratio equals exactly the balanced point (0.20) — it can never exceed it,
         // so a ring can only push ONE node up by sinking the other, at a cumulative burn cost.
         assert_eq!(combined.cmp_threshold(bp_num + 1, bp_den), core::cmp::Ordering::Less);
         // burned capital grows linearly with faked volume.
         let burned = 2 * (g * SETTLEMENT_BURN_BPS / BPS_DENOM) * cycles;
         assert!(burned > 0);
-        assert_eq!(burned, 2 * cycles * (g / 100));
+        assert_eq!(burned, 2 * cycles * (g * SETTLEMENT_BURN_BPS / BPS_DENOM));
     }
 }
