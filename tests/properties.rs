@@ -18,7 +18,9 @@ use ce_ratio::{
     Ratio, RatioConfig, Tier, admit_requester, balanced_point, classify, default_balanced_floor,
     rank_hosts, ratio_of, recency_factor_bps,
 };
-use ce_rs::{Amount, AtlasEntry, NodeHistory};
+use ce_economy::Amount;
+use ce_ratio::NodeHistory;
+use ce_rs::AtlasEntry;
 use proptest::prelude::*;
 
 const CREDIT_I: i128 = 1_000_000_000_000_000_000;

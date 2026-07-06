@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use ce_ratio::{rank_hosts, RatioConfig};
+use ce_ratio::{history::history, rank_hosts, RatioConfig};
 use ce_rs::CeClient;
 
 #[tokio::main]
@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     // amortize this over a large atlas (see PLAN risk note); kept simple here.
     let mut hist = HashMap::new();
     for entry in &atlas {
-        match client.history(&entry.node_id).await {
+        match history(&client, &entry.node_id).await {
             Ok(h) => {
                 hist.insert(entry.node_id.clone(), h);
             }

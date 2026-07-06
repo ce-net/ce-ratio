@@ -9,7 +9,11 @@ keywords = ["ce", "reputation", "share-ratio", "scheduler", "p2p"]
 categories = ["api-bindings"]
 
 [dependencies]
+# Cross-repo CE deps are github git deps; tools/ce-dev-link patches them to local WIP.
 ce-rs = { git = "https://github.com/ce-net/ce-rs" }
+# The trust ceapp reports the money unit (earned/spent) using the economy ceapp's Amount.
+ce-economy = { git = "https://github.com/ce-net/economy-adapter" }
+serde = { version = "1", features = ["derive"] }
 anyhow = "1"
 tracing = "0.1"
 

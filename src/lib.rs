@@ -41,7 +41,11 @@ pub use decay::{recency_factor_bps, RECENCY_FULL_BPS};
 
 use std::collections::HashMap;
 
-use ce_rs::{Amount, AtlasEntry, NodeHistory};
+pub mod history;
+pub use history::NodeHistory;
+
+use ce_economy::Amount;
+use ce_rs::AtlasEntry;
 
 // ---------------------------------------------------------------------------
 // Settlement-burn constants — mirror of `ce-chain` (NOT a dependency).
@@ -541,7 +545,7 @@ pub async fn fetch_and_classify(
     node_id: &str,
     cfg: &RatioConfig,
 ) -> anyhow::Result<(Tier, Option<Ratio>)> {
-    let history = client.history(node_id).await?;
+    let history = history::history(client, node_id).await?;
     let beacon = client.beacon().await?;
     let tier = classify(&history, beacon.height, cfg);
     let ratio = ratio_of(&history);
